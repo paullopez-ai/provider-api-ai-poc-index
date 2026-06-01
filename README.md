@@ -24,7 +24,101 @@ This collection demonstrates what becomes possible when you connect those two la
 
 ## POC Index
 
-### 1. Prior Auth Radar
+> While the majority of applications in this collection are built from the **provider** perspective — the hospitals, health systems, and physician groups submitting claims and authorization requests — the first entry approaches the same transaction from the opposite side. **Payer Auth Intelligence** demonstrates the **payer-side** decisioning architecture that receives, evaluates, and adjudicates those submissions. Together with the provider-side POCs that follow, it illustrates the full lifecycle of a prior authorization transaction across the payer-provider boundary.
+
+---
+
+### 1. Payer Auth Intelligence
+
+**Agentic prior authorization decisioning from the payer side of the transaction.**
+
+| | |
+|---|---|
+| **GitHub** | [paullopez-ai/payer-auth-intelligence](https://github.com/paullopez-ai/payer-auth-intelligence) |
+| **Live Demo** | Requires AWS |
+| **Primary API** | Optum Real Prior Authorization (payer-side adapter) |
+| **AI Layer** | Claude Sonnet via Anthropic SDK / Amazon Bedrock (LLM-agnostic) |
+| **Cloud Platform** | AWS (production) |
+| **IaC** | AWS CDK (TypeScript) |
+
+**Purpose:**
+Payer Auth Intelligence simulates the health-plan system that receives a prior authorization submission from a provider, evaluates it against benefit policy and medical-necessity criteria using a multi-agent LangGraph.js StateGraph, and routes it to an auto-approve, auto-deny, pending-info, or human-review outcome in near real time. The decisioning pipeline runs as an in-process graph with typed nodes for intake validation, benefit coverage determination, LLM-powered medical-necessity scoring, and deterministic threshold-based routing. When confidence is below threshold or the case is flagged as expedited, the graph pauses at a human-review interrupt and resumes with full state preserved after a reviewer acts.
+
+This is the **payer-side complement** to [Prior Auth Radar](https://github.com/paullopez-ai/prior-auth-radar), which handles the same PA transaction from the provider perspective. The integration seam between the two is the `ClaimsEngineAdapter` on the payer side and the eligibility/status endpoint on the provider side — in a real enterprise, this would be the same HL7 FHIR or adjudication API.
+
+**Healthcare Value:**
+Leading health plans target 80%+ touchless PA automation. This POC demonstrates the architecture that makes that possible, including the mandatory human-oversight boundary that keeps it responsible. Every decision traces to a versioned policy clause. The LLM never auto-denies on uncertainty — unparseable responses, unavailable policies, and unverifiable eligibility all escalate to human review by design. For payers processing millions of PA requests annually, even incremental automation at the intake and benefit-check layers frees clinical reviewers to focus on genuinely complex cases.
+
+**Three-Track Demo Strategy:**
+
+**Track 1 — Local Mock (recommended for live demos):**
+Zero API keys, zero AWS. Full graph execution with MemorySaver; all 8 built-in scenarios run with mock node functions. Instant and free.
+
+**Track 2 — Local Sandbox with Live LLM:**
+Real Claude reasoning on mock submissions. Still local, still MemorySaver, approximately $0.01 per run.
+
+**Track 3 — AWS Deployment (production architecture validation):**
+Next.js on Amplify, Lambda per agent node, DynamoDB audit trail, Bedrock for the LLM. Deploy once, record, tear down via `cdk destroy`.
+
+**Production Environment Variables:**
+`LLM_PROVIDER`, `ANTHROPIC_API_KEY`, `AWS_REGION`, `BEDROCK_MODEL_ID`, `USE_DYNAMODB_CHECKPOINTER`, `DYNAMODB_DECISIONS_TABLE`, `DYNAMODB_SUBMISSIONS_TABLE`, `S3_POLICY_BUCKET`
+
+**Enterprise Integration Points (Adapter Stubs):**
+
+| Adapter | Represents | Enterprise Systems |
+|---|---|---|
+| `ClaimsEngineAdapter` | Adjudication platform / claims core | Trizetto QNXT, proprietary core, HL7 FHIR R4 Coverage |
+| `PolicyRepositoryAdapter` | Medical policy & benefit config | MCG, InterQual, proprietary policy management |
+| `MemberEligibilityAdapter` | Real-time eligibility | X12 270/271, FHIR R4 Coverage, Optum Real |
+| `NotificationAdapter` | Provider notification | FHIR R4 Task, portal webhook, Direct Secure Messaging, fax API |
+
+**Architecture:**
+
+```
+ LangGraph.js StateGraph (in-process decisioning pipeline)
+
+                                          ┌──────────────────────────────┐
+                                          │ expedited & confidence < 0.95 │
+                                          v                               │
+  [START] → intake → benefit_check → med_necessity ──(routing)──► routing ──► [END]
+                                          │                               │
+                                          └───────────► human_review ◄────┘
+                                               (interruptBefore)    ^ ESCALATED_TO_HUMAN
+                                                                    │
+                                           POST /api/decisions/[id]/resume
+                                           injects reviewer input, resumes
+
+ Nodes:
+   intake         — validates completeness, enriches with member eligibility
+   benefit_check  — coverage determination from policy repository (no LLM)
+   med_necessity  — LLM reasoning node; scores confidence against criteria
+   routing        — deterministic threshold rules → final PADecision (no LLM)
+   human_review   — resumes after reviewer approves/denies/pends escalated case
+
+ AWS Production (Track 3):
+┌─────────────────────────────────────────────────────────────┐
+│               Payer Auth Intelligence                        │
+│                  (AWS Amplify + Lambda)                      │
+└───────────────────┬─────────────────────┬───────────────────┘
+                    │                     │
+         ┌──────────▼──────────┐ ┌────────▼──────────────────┐
+         │  LangGraph.js       │ │  Amazon Bedrock            │
+         │  StateGraph         │ │  Claude Sonnet (inference)  │
+         │  (Lambda per node)  │ │  S3 (policy documents)     │
+         └──────────┬──────────┘ └────────┬──────────────────┘
+                    │                     │
+         ┌──────────▼─────────────────────▼───────────┐
+         │          DynamoDB Audit Trail                │
+         │   Checkpoints + Decisions + Submissions     │
+         │   Full state preserved across interrupts    │
+         └─────────────────────────────────────────────┘
+
+Infrastructure provisioned via AWS CDK (infrastructure/)
+```
+
+---
+
+### 2. Prior Auth Radar
 
 **The fastest path from clinical order to authorization decision.**
 
@@ -97,7 +191,7 @@ Infrastructure provisioned via Terraform (infrastructure/)
 
 ---
 
-### 2. Patient Cost Clarity
+### 3. Patient Cost Clarity
 
 **Real-time cost estimates before the patient leaves the exam room.**
 
@@ -170,7 +264,7 @@ Infrastructure provisioned via Bicep
 
 ---
 
-### 3. Optum Real Eligibility Starter
+### 4. Optum Real Eligibility Starter
 
 **Instant eligibility verification with AI-powered coverage interpretation.**
 
@@ -213,7 +307,7 @@ Next.js 15, TypeScript, Tailwind CSS, Optum Real Eligibility API (sandbox), Clau
 
 ---
 
-### 4. Claim Pre-Check
+### 5. Claim Pre-Check
 
 **Validate before you submit. Catch denials before they happen.**
 
@@ -256,7 +350,7 @@ Next.js 15, TypeScript, Tailwind CSS, Optum Real Claim Pre-Check API (sandbox), 
 
 ---
 
-### 5. Claim Status Radar
+### 6. Claim Status Radar
 
 **Real-time claim tracking with AI-powered next-step intelligence.**
 
@@ -309,7 +403,7 @@ All POCs in this collection follow the same foundational design decisions.
 
 **HIPAA-Conscious by Default:** No real patient data is required or accepted in sandbox or demo modes. All synthetic data follows realistic clinical patterns while remaining entirely fictitious. Production deployments require appropriate BAA agreements and PHI handling controls.
 
-**Provider-Only Focus:** Every use case targets the provider side of the payer-provider relationship: hospitals, health systems, physician groups, and their administrative and clinical staff.
+**Provider-Only Focus:** The majority of use cases target the provider side of the payer-provider relationship: hospitals, health systems, physician groups, and their administrative and clinical staff.
 
 **Zero External Dependencies in Demo Mode:** All POCs can be demoed in a completely offline-compatible mock mode. No API calls, no credentials, no network dependency.
 
@@ -322,6 +416,7 @@ All POCs in this collection follow the same foundational design decisions.
 | Demo Framework | Next.js 15 (App Router), TypeScript, Tailwind CSS |
 | Demo Hosting | Vercel |
 | Payer Data | Optum Real APIs (sandbox / mock) |
+| AWS Production (payer-auth-intelligence) | Claude Sonnet via Amazon Bedrock, LangGraph.js StateGraph, DynamoDB, Lambda, Amplify, AWS CDK |
 | AWS Production (prior-auth-radar) | Claude via Amazon Bedrock, pgvector on RDS, Amazon ECS, Terraform |
 | Azure Production (patient-cost-clarity-starter) | Azure OpenAI GPT-5.4, Semantic Kernel, Azure AI Search, Azure Container Apps, Bicep |
 | Observability (Azure) | Application Insights |
